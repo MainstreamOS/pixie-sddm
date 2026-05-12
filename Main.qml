@@ -704,6 +704,9 @@ Rectangle {
                         focus: loginState.visible
                         enabled: !container.isLoggingIn
                         selectByMouse: true
+                        // Suppress default thin cursor — a custom thick one is drawn
+                        // in the symbols Flickable below so it tracks the visible symbols.
+                        cursorDelegate: Item { width: 0; height: 0 }
 
                         background: Rectangle {
                             radius: 56 * container.uiScale
@@ -740,11 +743,38 @@ Rectangle {
                         height: 48 * container.uiScale
                         clip: true
                         interactive: false // Controlled by password length
-                        contentWidth: symbolsRow.implicitWidth
+                        contentWidth: cursorIndicator.x + cursorIndicator.width
                         contentX: Math.max(0, contentWidth - width)
-                        
+
                         Behavior on contentX {
                             NumberAnimation { duration: 200; easing.type: Easing.OutQuad }
+                        }
+
+                        // Thick custom cursor — sits at the end of the visible symbols.
+                        // Matches the symbol color so it reads as part of the same row.
+                        Rectangle {
+                            id: cursorIndicator
+                            width: 6 * container.uiScale
+                            height: 42 * container.uiScale
+                            radius: 3 * container.uiScale
+                            color: config.primaryColor
+                            y: (symbolsFlickable.height - height) / 2
+                            x: passwordField.text.length > 0
+                                ? symbolsRow.x + symbolsRow.width + 10 * container.uiScale
+                                : 0
+                            visible: passwordField.activeFocus && !container.isLoggingIn
+                            opacity: 0.85
+
+                            Behavior on x {
+                                NumberAnimation { duration: 200; easing.type: Easing.OutQuad }
+                            }
+
+                            SequentialAnimation on opacity {
+                                loops: Animation.Infinite
+                                running: cursorIndicator.visible
+                                NumberAnimation { from: 0.85; to: 0.0; duration: 530; easing.type: Easing.InOutQuad }
+                                NumberAnimation { from: 0.0; to: 0.85; duration: 530; easing.type: Easing.InOutQuad }
+                            }
                         }
 
                         Row {
