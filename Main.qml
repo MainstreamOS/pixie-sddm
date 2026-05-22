@@ -861,6 +861,40 @@ Rectangle {
                     }
                 }
 
+            }
+
+            // Lock-state indicators sit below contentColumn in their own
+            // Column so toggling them doesn't reshape the main form.
+            // contentColumn's implicitHeight stays fixed (it no longer
+            // includes the indicator Text items), loginCard's vertical
+            // center never moves, so the avatar/name/password stay
+            // rock-solid in place when Caps/Num Lock toggle.
+            Column {
+                id: lockIndicators
+                anchors.top: contentColumn.bottom
+                anchors.topMargin: 48 * container.uiScale
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 12 * container.uiScale
+
+                // Caps lock indicator -- shown when the user might be
+                // typing the wrong case into the password field. Mirrors
+                // the Num Lock indicator below; same SDDM keyboard API.
+                Text {
+                    id: capsLockIndicator
+                    text: "Caps Lock is on"
+                    color: container.extractedAccent
+                    font.pixelSize: 28 * container.uiScale
+                    font.family: config.fontFamily
+                    font.weight: Font.Medium
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: {
+                        if (typeof keyboard !== "undefined" && typeof keyboard.capsLock !== "undefined") return keyboard.capsLock;
+                        return false;
+                    }
+                    opacity: visible ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 200 } }
+                }
+
                 // Num lock indicator -- preserved
                 Text {
                     id: numLockIndicator
