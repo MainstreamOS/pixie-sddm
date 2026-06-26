@@ -925,7 +925,9 @@ Rectangle {
                 bottomMargin: 60 * container.uiScale
                 rightMargin: 80 * container.uiScale
             }
-            width: 360 * container.uiScale
+            // Stay at the default width, but grow to fit longer session names
+            // (e.g. the gamescope/Steam sessions) so the label never spills out.
+            width: Math.max(360 * container.uiScale, sessionRow.implicitWidth + 96 * container.uiScale)
             height: 72 * container.uiScale
             // Only show when there's a real choice -- a single-session system gets
             // dropped into that session unconditionally, so the pill is just clutter.
@@ -942,6 +944,7 @@ Rectangle {
             Behavior on scale { NumberAnimation { duration: 100 } }
 
             RowLayout {
+                id: sessionRow
                 anchors.centerIn: parent
                 spacing: 16 * container.uiScale
                 Text {
