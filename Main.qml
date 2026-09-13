@@ -38,23 +38,17 @@ Rectangle {
     // ones, because a machine set up with one layout is exactly where a guest
     // needs another to type a password.
     property var kbCatalog: []
-    property bool kbCatalogLoaded: false
     property var kbActive: ({ code: "us", variant: "" })
-    property string kbFilter: ""
     // base.lst carries a few hundred entries, unusable as a flat list, so the
     // picker filters on name or code as you type.
     readonly property var kbFilteredCatalog: {
-        var f = kbFilter.trim().toLowerCase();
+        var f = layoutSearch.text.trim().toLowerCase();
         if (!f) return kbCatalog;
         return kbCatalog.filter(function(c) {
             return c.name.toLowerCase().indexOf(f) !== -1
                 || c.code.toLowerCase().indexOf(f) !== -1;
         });
     }
-    // Set for a moment after a pick, so the poll below does not flip the pill
-    // back to the old layout in the half second before the bridge applies it.
-    property bool kbHoldState: false
-    property bool kbStateWarned: false
 
     function kbLayoutId(entry) {
         return entry.code + ":" + (entry.variant || "");
@@ -91,51 +85,23 @@ Rectangle {
     }
 
     function loadKbCatalog() {
-        var xhr = new XMLHttpRequest();
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState !== XMLHttpRequest.DONE) return;
-            if (xhr.status !== 0 && xhr.status !== 200) {
-                console.log("[pixie-kb] base.lst not readable, status " + xhr.status);
-                return;
-            }
-            container.kbCatalog = parseXkbCatalog(xhr.responseText || "");
-            container.kbCatalogLoaded = true;
-            console.log("[pixie-kb] catalog loaded: " + container.kbCatalog.length + " layouts");
-        };
-        try {
-            xhr.open("GET", "file:///usr/share/X11/xkb/rules/base.lst");
-            xhr.send();
-        } catch (e) { /* base.lst missing: the pill shows raw codes */ }
+        readLocalFile("file:///usr/share/X11/xkb/rules/base.lst", function(text) {
+            container.kbCatalog = parseXkbCatalog(text);
+        });
     }
 
     // Polls the snapshot the bridge publishes. Re-read on a timer rather than
     // once, so a layout changed by anything other than this picker shows too.
     function loadKbState() {
-        var xhr = new XMLHttpRequest();
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState !== XMLHttpRequest.DONE) return;
-            if (xhr.status !== 0 && xhr.status !== 200) {
-                if (!container.kbStateWarned) {
-                    console.log("[pixie-kb] state file not readable, status " + xhr.status + "; is the bridge running?");
-                    container.kbStateWarned = true;
-                }
-                return;
-            }
-            if (container.kbHoldState) return;
-            var text = xhr.responseText || "";
+        readLocalFile("file://" + container.kbStateDir + "/state", function(text) {
+            if (kbHoldTimer.running) return;
             var layoutM = text.match(/^[ \t]*activeLayout[ \t]*=[ \t]*(.*?)[ \t\r]*$/m);
             if (!layoutM || !layoutM[1]) return;
             var variantM = text.match(/^[ \t]*activeVariant[ \t]*=[ \t]*(.*?)[ \t\r]*$/m);
             var entry = { code: layoutM[1].trim(), variant: variantM ? variantM[1].trim() : "" };
-            if (container.kbLayoutId(entry) !== container.kbLayoutId(container.kbActive)) {
-                console.log("[pixie-kb] layout in effect: " + container.kbLayoutId(entry));
+            if (container.kbLayoutId(entry) !== container.kbLayoutId(container.kbActive))
                 container.kbActive = entry;
-            }
-        };
-        try {
-            xhr.open("GET", "file://" + container.kbStateDir + "/state");
-            xhr.send();
-        } catch (e) { /* bridge not running: keep the last known state */ }
+        });
     }
 
     // Shows the pick at once and hands it to the bridge, which rewrites
@@ -143,9 +109,7 @@ Rectangle {
     // the greeter booted with it.
     function selectKbLayout(entry) {
         if (!entry || !entry.code) return;
-        console.log("[pixie-kb] picked: " + kbLayoutId(entry));
         kbActive = { code: entry.code, variant: entry.variant || "" };
-        kbHoldState = true;
         kbHoldTimer.restart();
         // Variant first, so the bridge, which acts on the layout key, never
         // reads a new layout against a stale variant.
@@ -172,10 +136,11 @@ Rectangle {
         onTriggered: container.loadKbState()
     }
 
+    // Running for a moment after a pick, so the poll does not flip the pill
+    // back to the old layout in the half second before the bridge applies it.
     Timer {
         id: kbHoldTimer
         interval: 2500
-        onTriggered: container.kbHoldState = false
     }
 
     // Layout scale. Every hardcoded pixel value below was sized for a 4K
@@ -192,19 +157,29 @@ Rectangle {
     // text falls back to month-first in that case.
     property string syncedDateFormat: ""
 
-    function loadSyncedDateFormat() {
+    // The one way plain QML can read a local file: XMLHttpRequest on file://,
+    // which needs QML_XHR_ALLOW_FILE_READ=1 in the greeter's environment. A
+    // missing or refused file answers with status 0 and no text rather than
+    // an error, so an empty answer counts as one.
+    function readLocalFile(url, onText) {
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== XMLHttpRequest.DONE) return;
-            if (xhr.status !== 0 && xhr.status !== 200) return;
             var text = xhr.responseText || "";
-            var m = text.match(/^[ \t]*dateFormat[ \t]*=[ \t]*(.*?)[ \t\r]*$/m);
-            if (m && m[1]) container.syncedDateFormat = m[1];
+            if (xhr.status === 200 || text !== "") onText(text);
         };
         try {
-            xhr.open("GET", "file:///var/lib/pixie-sddm/state.conf");
+            xhr.open("GET", url);
             xhr.send();
-        } catch (e) { /* ignore — file missing or XHR file-read disabled */ }
+        } catch (e) {
+        }
+    }
+
+    function loadSyncedDateFormat() {
+        readLocalFile("file:///var/lib/pixie-sddm/state.conf", function(text) {
+            var m = text.match(/^[ \t]*dateFormat[ \t]*=[ \t]*(.*?)[ \t\r]*$/m);
+            if (m && m[1]) container.syncedDateFormat = m[1];
+        });
     }
 
     Component.onCompleted: {
@@ -1354,7 +1329,6 @@ Rectangle {
                     font.pixelSize: 24 * container.uiScale
                     font.family: config.fontFamily
                     clip: true
-                    onTextChanged: container.kbFilter = text
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         visible: layoutSearch.text.length === 0
