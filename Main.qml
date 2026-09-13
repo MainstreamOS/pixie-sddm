@@ -9,6 +9,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Effects
 import QtQuick.Shapes
+import QtCore
 import "components"
 
 Rectangle {
@@ -22,6 +23,160 @@ Rectangle {
     property int userIndex: 0
     property int sessionIndex: 0
     property bool isLoggingIn: false
+
+    // Keyboard layout picker. Hyprland is the compositor drawing this greeter,
+    // so the layout picked here has to change that Hyprland's real input
+    // config, not a label. QML cannot spawn hyprctl in the greeter sandbox, so
+    // pixie-sddm-keyboard-bridge.sh, started from that Hyprland's own config,
+    // does it: it publishes the layout in effect to a state file polled below
+    // and applies whatever the kbRequest Settings object writes. Reading a
+    // local file through XMLHttpRequest needs QML_XHR_ALLOW_FILE_READ=1 in
+    // the greeter's environment, which the SDDM config sets.
+    readonly property string kbStateDir: "/run/mainstream-greeter"
+    // Every layout XKB knows about, parsed from base.lst: code and variant to
+    // a friendly name. The picker offers all of them rather than the configured
+    // ones, because a machine set up with one layout is exactly where a guest
+    // needs another to type a password.
+    property var kbCatalog: []
+    property bool kbCatalogLoaded: false
+    property var kbActive: ({ code: "us", variant: "" })
+    property string kbFilter: ""
+    // base.lst carries a few hundred entries, unusable as a flat list, so the
+    // picker filters on name or code as you type.
+    readonly property var kbFilteredCatalog: {
+        var f = kbFilter.trim().toLowerCase();
+        if (!f) return kbCatalog;
+        return kbCatalog.filter(function(c) {
+            return c.name.toLowerCase().indexOf(f) !== -1
+                || c.code.toLowerCase().indexOf(f) !== -1;
+        });
+    }
+    // Set for a moment after a pick, so the poll below does not flip the pill
+    // back to the old layout in the half second before the bridge applies it.
+    property bool kbHoldState: false
+    property bool kbStateWarned: false
+
+    function kbLayoutId(entry) {
+        return entry.code + ":" + (entry.variant || "");
+    }
+
+    function kbDisplayName(entry) {
+        if (!entry) return "";
+        var id = kbLayoutId(entry);
+        var known = kbCatalog.find(function(c) { return kbLayoutId(c) === id; });
+        if (known) return known.name;
+        return entry.code.toUpperCase() + (entry.variant ? " " + entry.variant : "");
+    }
+
+    // The same three sections the Settings app's picker reads: "! layout",
+    // "! variant" and "! option", of which the last is not a layout.
+    function parseXkbCatalog(text) {
+        var catalog = [];
+        var section = "";
+        var lines = text.split("\n");
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            if (/^!\s*layout/.test(line)) { section = "layout"; continue; }
+            if (/^!\s*variant/.test(line)) { section = "variant"; continue; }
+            if (/^!/.test(line)) { section = ""; continue; }
+            if (section === "layout") {
+                var m = line.match(/^\s*(\S+)\s+(.+?)\s*$/);
+                if (m && m[1] !== "custom") catalog.push({ code: m[1], variant: "", name: m[2] });
+            } else if (section === "variant") {
+                var mv = line.match(/^\s*(\S+)\s+(\S+):\s*(.+?)\s*$/);
+                if (mv) catalog.push({ code: mv[2], variant: mv[1], name: mv[3] });
+            }
+        }
+        return catalog;
+    }
+
+    function loadKbCatalog() {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return;
+            if (xhr.status !== 0 && xhr.status !== 200) {
+                console.log("[pixie-kb] base.lst not readable, status " + xhr.status);
+                return;
+            }
+            container.kbCatalog = parseXkbCatalog(xhr.responseText || "");
+            container.kbCatalogLoaded = true;
+            console.log("[pixie-kb] catalog loaded: " + container.kbCatalog.length + " layouts");
+        };
+        try {
+            xhr.open("GET", "file:///usr/share/X11/xkb/rules/base.lst");
+            xhr.send();
+        } catch (e) { /* base.lst missing: the pill shows raw codes */ }
+    }
+
+    // Polls the snapshot the bridge publishes. Re-read on a timer rather than
+    // once, so a layout changed by anything other than this picker shows too.
+    function loadKbState() {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return;
+            if (xhr.status !== 0 && xhr.status !== 200) {
+                if (!container.kbStateWarned) {
+                    console.log("[pixie-kb] state file not readable, status " + xhr.status + "; is the bridge running?");
+                    container.kbStateWarned = true;
+                }
+                return;
+            }
+            if (container.kbHoldState) return;
+            var text = xhr.responseText || "";
+            var layoutM = text.match(/^[ \t]*activeLayout[ \t]*=[ \t]*(.*?)[ \t\r]*$/m);
+            if (!layoutM || !layoutM[1]) return;
+            var variantM = text.match(/^[ \t]*activeVariant[ \t]*=[ \t]*(.*?)[ \t\r]*$/m);
+            var entry = { code: layoutM[1].trim(), variant: variantM ? variantM[1].trim() : "" };
+            if (container.kbLayoutId(entry) !== container.kbLayoutId(container.kbActive)) {
+                console.log("[pixie-kb] layout in effect: " + container.kbLayoutId(entry));
+                container.kbActive = entry;
+            }
+        };
+        try {
+            xhr.open("GET", "file://" + container.kbStateDir + "/state");
+            xhr.send();
+        } catch (e) { /* bridge not running: keep the last known state */ }
+    }
+
+    // Shows the pick at once and hands it to the bridge, which rewrites
+    // input:kb_layout, so any layout XKB knows can be chosen whether or not
+    // the greeter booted with it.
+    function selectKbLayout(entry) {
+        if (!entry || !entry.code) return;
+        console.log("[pixie-kb] picked: " + kbLayoutId(entry));
+        kbActive = { code: entry.code, variant: entry.variant || "" };
+        kbHoldState = true;
+        kbHoldTimer.restart();
+        // Variant first, so the bridge, which acts on the layout key, never
+        // reads a new layout against a stale variant.
+        kbRequest.requestedVariant = entry.variant || "";
+        kbRequest.requestedLayout = entry.code;
+        layoutPopup.close();
+    }
+
+    // QtCore's Settings writes plain key=value text through QSettings, the one
+    // documented way plain QML can write a file at all.
+    Settings {
+        id: kbRequest
+        location: "file:///run/mainstream-greeter/request"
+        property string requestedVariant: ""
+        property string requestedLayout: ""
+    }
+
+    Timer {
+        id: kbStateTimer
+        interval: 1200
+        repeat: true
+        running: true
+        triggeredOnStart: true
+        onTriggered: container.loadKbState()
+    }
+
+    Timer {
+        id: kbHoldTimer
+        interval: 2500
+        onTriggered: container.kbHoldState = false
+    }
 
     // Layout scale. Every hardcoded pixel value below was sized for a 4K
     // (2160 px tall) screen; we scale them down proportionally for smaller
@@ -54,6 +209,7 @@ Rectangle {
 
     Component.onCompleted: {
         loadSyncedDateFormat();
+        loadKbCatalog();
         if (typeof userModel !== "undefined" && userModel.lastIndex >= 0) userIndex = userModel.lastIndex;
         if (typeof sessionModel !== "undefined" && sessionModel.lastIndex >= 0) sessionIndex = sessionModel.lastIndex;
         // onUserIndexChanged won't fire if userIndex stayed at 0 (single-user systems),
@@ -914,6 +1070,61 @@ Rectangle {
             }
         }
 
+        // Bottom-left: keyboard layout pill, opposite the session pill. Always
+        // shown, whatever the number of configured layouts: the picker offers
+        // everything XKB knows, so there is a choice to make on any machine.
+        Rectangle {
+            id: layoutPill
+            anchors {
+                bottom: parent.bottom
+                left: parent.left
+                bottomMargin: 60 * container.uiScale
+                leftMargin: 80 * container.uiScale
+            }
+            width: Math.max(360 * container.uiScale, layoutRow.implicitWidth + 96 * container.uiScale)
+            height: 72 * container.uiScale
+            color: (layoutClickArea.pressed || layoutPopup.opened)
+                ? Qt.darker(container.extractedAccent, 1.1)
+                : container.extractedAccent
+            radius: 36 * container.uiScale
+            z: 50
+
+            Behavior on color { ColorAnimation { duration: 200 } }
+            scale: layoutClickArea.pressed ? 0.95 : 1.0
+            Behavior on scale { NumberAnimation { duration: 100 } }
+
+            RowLayout {
+                id: layoutRow
+                anchors.centerIn: parent
+                spacing: 16 * container.uiScale
+                Text {
+                    // A plain Unicode keyboard sign rather than an icon-font
+                    // glyph: the theme bundles no symbol face, and a codepoint
+                    // the common system fonts cover cannot come out as a box.
+                    text: "⌨"
+                    color: "#1A1C18"
+                    font.pixelSize: 30 * container.uiScale
+                    font.family: config.fontFamily
+                }
+                Text {
+                    text: container.kbDisplayName(container.kbActive) + " ▾"
+                    color: "#1A1C18"
+                    font.pixelSize: 26 * container.uiScale
+                    font.family: config.fontFamily
+                    font.weight: Font.Medium
+                }
+            }
+
+            MouseArea {
+                id: layoutClickArea
+                anchors.fill: parent
+                onClicked: {
+                    layoutSearch.text = "";
+                    layoutPopup.open();
+                }
+            }
+        }
+
         // Bottom-right: session selector pill -- always visible.
         // Uses the wallpaper-extracted accent like the submit button.
         // Click opens the full session popup.
@@ -1095,6 +1306,102 @@ Rectangle {
             Keys.onUpPressed: decrementCurrentIndex()
             Keys.onReturnPressed: { container.userIndex = currentIndex; userPopup.close(); }
             Keys.onEnterPressed: { container.userIndex = currentIndex; userPopup.close(); }
+        }
+    }
+
+    // Mirrors sessionPopup, anchored to the layout pill on the other corner.
+    // Taller and filtered, because this lists every layout XKB knows rather
+    // than the handful of sessions installed.
+    Popup {
+        id: layoutPopup
+        width: 520 * container.uiScale
+        height: 640 * container.uiScale
+        x: layoutPill.x
+        y: layoutPill.y - height - 16 * container.uiScale
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onOpened: layoutSearch.forceActiveFocus()
+        background: Rectangle {
+            radius: 24 * container.uiScale
+            border.width: 1
+            border.color: Qt.rgba(1, 1, 1, 0.08)
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.rgba(0.12, 0.14, 0.17, 0.92) }
+                GradientStop { position: 1.0; color: Qt.rgba(0.06, 0.08, 0.10, 0.92) }
+            }
+        }
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 200 } }
+        exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 200 } }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 20 * container.uiScale
+            spacing: 14 * container.uiScale
+
+            Rectangle {
+                Layout.fillWidth: true
+                height: 60 * container.uiScale
+                radius: 14 * container.uiScale
+                color: Qt.rgba(1, 1, 1, 0.06)
+                TextInput {
+                    id: layoutSearch
+                    anchors.fill: parent
+                    anchors.leftMargin: 18 * container.uiScale
+                    anchors.rightMargin: 18 * container.uiScale
+                    verticalAlignment: TextInput.AlignVCenter
+                    color: config.primaryColor
+                    font.pixelSize: 24 * container.uiScale
+                    font.family: config.fontFamily
+                    clip: true
+                    onTextChanged: container.kbFilter = text
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: layoutSearch.text.length === 0
+                        text: "Search layouts"
+                        color: Qt.rgba(1, 1, 1, 0.35)
+                        font: layoutSearch.font
+                    }
+                }
+            }
+
+            ListView {
+                id: layoutList
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                model: container.kbFilteredCatalog
+                spacing: 8 * container.uiScale
+                clip: true
+                delegate: Rectangle {
+                    required property var modelData
+                    width: layoutList.width
+                    height: 60 * container.uiScale
+                    radius: 14 * container.uiScale
+                    readonly property bool isActive:
+                        container.kbLayoutId(modelData) === container.kbLayoutId(container.kbActive)
+                    color: isActive ? Qt.rgba(1, 1, 1, 0.14)
+                                    : (layoutItemArea.containsMouse ? Qt.rgba(1, 1, 1, 0.07) : "transparent")
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        anchors.leftMargin: 18 * container.uiScale
+                        anchors.right: parent.right
+                        anchors.rightMargin: 18 * container.uiScale
+                        elide: Text.ElideRight
+                        text: modelData.name
+                        color: config.primaryColor
+                        font.pixelSize: 23 * container.uiScale
+                        font.family: config.fontFamily
+                        font.weight: parent.isActive ? Font.Medium : Font.Normal
+                    }
+                    MouseArea {
+                        id: layoutItemArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: container.selectKbLayout(parent.modelData)
+                    }
+                }
+            }
         }
     }
 
