@@ -74,7 +74,7 @@ fi
 
 echo -e "${BLUE}==>${NC} Installing Pixie (Qt${SYSTEM_QT}) to ${THEME_DIR}..."
 mkdir -p "${THEME_DIR}"
-cp -r assets components Main.qml metadata.desktop theme.conf LICENSE "${THEME_DIR}/"
+cp -r assets components Main.qml VideoBackground.qml metadata.desktop theme.conf LICENSE "${THEME_DIR}/"
 chmod -R 755 "${THEME_DIR}"
 
 if [ -n "${BG_BACKUP}" ] && [ -d "${BG_BACKUP}" ]; then

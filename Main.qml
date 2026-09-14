@@ -222,6 +222,15 @@ Rectangle {
         return config.background;
     }
 
+    // The moving version of the same wallpaper, written beside the still by the
+    // desktop's wallpaper switcher. Missing is the normal case: the still shows.
+    function getUserVideo(index) {
+        var bg = getUserBackground(index).toString();
+        if (!bg.match(/\.(png|jpg|jpeg|webp)$/i))
+            return "";
+        return bg.replace(/\.[^.]+$/, ".mp4");
+    }
+
     onUserIndexChanged: {
         var newBg = getUserBackground(userIndex);
         var currentSrc = bgCurrent.source.toString();
@@ -230,6 +239,8 @@ Rectangle {
         bgCrossfade.stop();
         bgNext.opacity = 0;
         bgNext.source = newBg;
+        if (videoBackground.item)
+            videoBackground.item.videoSource = container.getUserVideo(container.userIndex);
     }
 
     function doLogin() {
@@ -457,6 +468,16 @@ Rectangle {
                     }
                 }
             }
+        }
+
+        // Loaded by name rather than imported, so a missing QtMultimedia costs
+        // the moving wallpaper and nothing else.
+        Loader {
+            id: videoBackground
+            anchors.fill: parent
+            asynchronous: true
+            source: "VideoBackground.qml"
+            onLoaded: item.videoSource = container.getUserVideo(container.userIndex)
         }
 
         SequentialAnimation {
