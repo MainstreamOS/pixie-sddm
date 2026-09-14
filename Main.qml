@@ -175,15 +175,21 @@ Rectangle {
         }
     }
 
-    function loadSyncedDateFormat() {
+    // Frames a second the login screen redraws a video wallpaper at, 0 for the
+    // file's own rate. Shares the state file the date format arrives in.
+    property int syncedVideoFrameRate: 0
+
+    function loadSyncedState() {
         readLocalFile("file:///var/lib/pixie-sddm/state.conf", function(text) {
             var m = text.match(/^[ \t]*dateFormat[ \t]*=[ \t]*(.*?)[ \t\r]*$/m);
             if (m && m[1]) container.syncedDateFormat = m[1];
+            var f = text.match(/^[ \t]*videoFrameRate[ \t]*=[ \t]*([0-9]+)[ \t\r]*$/m);
+            if (f) container.syncedVideoFrameRate = parseInt(f[1], 10);
         });
     }
 
     Component.onCompleted: {
-        loadSyncedDateFormat();
+        loadSyncedState();
         loadKbCatalog();
         if (typeof userModel !== "undefined" && userModel.lastIndex >= 0) userIndex = userModel.lastIndex;
         if (typeof sessionModel !== "undefined" && sessionModel.lastIndex >= 0) sessionIndex = sessionModel.lastIndex;
@@ -477,7 +483,10 @@ Rectangle {
             anchors.fill: parent
             asynchronous: true
             source: "VideoBackground.qml"
-            onLoaded: item.videoSource = container.getUserVideo(container.userIndex)
+            onLoaded: {
+                item.frameRate = Qt.binding(function() { return container.syncedVideoFrameRate; });
+                item.videoSource = container.getUserVideo(container.userIndex);
+            }
         }
 
         SequentialAnimation {
