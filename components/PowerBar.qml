@@ -15,6 +15,8 @@ Row {
     // Layout scale (1.0 = 4K reference). Set by the caller; defaults to 1.0
     // so the component still renders at native size if used standalone.
     property real uiScale: 1.0
+    // Set by the caller from theme.conf; see iconFontFamily in Main.qml.
+    property string iconFontFamily: "Symbols Nerd Font Mono"
 
     // Battery
     Row {
@@ -34,6 +36,7 @@ Row {
         }
         Text {
             text: (typeof battery !== "undefined" && battery.charging) ? "󱐋" : "󰁹"
+            font.family: powerBarRoot.iconFontFamily
             color: textColor
             font.pixelSize: 36 * uiScale
             anchors.verticalCenter: parent.verticalCenter
@@ -60,6 +63,7 @@ Row {
     // Suspend
     Text {
         text: "󰤄"
+        font.family: powerBarRoot.iconFontFamily
         color: textColor
         font.pixelSize: 40 * uiScale
         anchors.verticalCenter: parent.verticalCenter
@@ -72,6 +76,7 @@ Row {
     // Restart
     Text {
         text: "󰑐"
+        font.family: powerBarRoot.iconFontFamily
         color: textColor
         font.pixelSize: 40 * uiScale
         anchors.verticalCenter: parent.verticalCenter
@@ -84,6 +89,7 @@ Row {
     // Shutdown
     Text {
         text: "󰐥"
+        font.family: powerBarRoot.iconFontFamily
         color: textColor
         font.pixelSize: 40 * uiScale
         anchors.verticalCenter: parent.verticalCenter

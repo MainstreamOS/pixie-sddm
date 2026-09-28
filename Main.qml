@@ -19,6 +19,11 @@ Rectangle {
     color: config.backgroundColor
     focus: !loginState.visible
 
+    // The icons are Nerd Font glyphs in the private use area, which Qt's font
+    // fallback does not reach, so they name the font that has them. Without
+    // it they draw as boxes once no regular text font carries them.
+    readonly property string iconFontFamily: config.iconFontFamily || "Symbols Nerd Font Mono"
+
     // User & Session Logic (Root Level)
     property int userIndex: 0
     property int sessionIndex: 0
@@ -537,6 +542,7 @@ Rectangle {
         }
         uiScale: container.uiScale
         textColor: container.extractedAccent
+        iconFontFamily: container.iconFontFamily
         z: 100
         opacity: colorExtractor.processed ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 300 } }
@@ -1168,7 +1174,7 @@ Rectangle {
                     // Dark icon on the bright accent fill -- mirrors the submit button.
                     color: "#1A1C18"
                     font.pixelSize: 32 * container.uiScale
-                    font.family: config.fontFamily
+                    font.family: container.iconFontFamily
                 }
                 Text {
                     text: {
@@ -1472,7 +1478,7 @@ Rectangle {
                         text: "󰟀"
                         color: isCurrent ? container.extractedAccent : "gray"
                         font.pixelSize: 32 * container.uiScale
-                        font.family: config.fontFamily
+                        font.family: container.iconFontFamily
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
